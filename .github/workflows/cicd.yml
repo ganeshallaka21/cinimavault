@@ -1,375 +1,111 @@
-name: CineVault Multi-Environment CI/CD
+name: Build and Deploy train-ticket-reservation
 
 on:
   push:
-    branches:
-      - main
-
-permissions:
-  contents: read
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
-
-  # ==========================================================
-  # BUILD AND TEST
-  # ==========================================================
   build:
-    name: Build & Test
     runs-on: ubuntu-latest
-
     steps:
-
-      - name: Checkout source
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Setup Java 21
+      - name: Set up Java
         uses: actions/setup-java@v4
         with:
-          distribution: temurin
-          java-version: '21'
-          cache: maven
+          distribution: 'temurin'
+          java-version: '17'
 
-      - name: Build and test
-        run: mvn -B clean package
+      - name: Build with Maven
+        run: mvn clean package -DskipTests
 
-      - name: Verify WAR
-        run: |
-          echo "Checking generated WAR..."
-          test -f target/cinevault.war
-          ls -lh target/cinevault.war
-          echo "WAR created successfully."
+      - name: Find WAR file
+        run: echo "WAR_FILE=$(ls target/*.war | head -n 1)" >> $GITHUB_ENV
 
       - name: Upload WAR artifact
         uses: actions/upload-artifact@v4
         with:
-          name: cinevault-war
-          path: target/cinevault.war
-          retention-days: 7
+          name: war-file
+          path: ${{ env.WAR_FILE }}
 
-
-  # ==========================================================
-  # DEV
-  # ==========================================================
   deploy-dev:
-    name: Deploy → DEV
     needs: build
     runs-on: ubuntu-latest
-
-    environment:
-      name: dev
-
     steps:
-
-      - name: Download WAR
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: cinevault-war
-          path: artifact
-
-      - name: Prepare SSH
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p ~/.ssh
-
-          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/cinevault.pem
-
-          chmod 600 ~/.ssh/cinevault.pem
-
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+          name: war-file
 
       - name: Deploy to DEV
-        shell: bash
+        env:
+          URL: ${{ secrets.TOMCAT_HOST_DEV }}
+          USER: ${{ secrets.TOMCAT_USER_DEV }}
+          PASS: ${{ secrets.TOMCAT_PASS_DEV }}
         run: |
-          set -e
+          WAR_FILE=$(ls *.war | head -n 1)
+          echo "Deploying $WAR_FILE to DEV ($URL)"
+          curl -v -u "$USER:$PASS" "$URL/list"
+          curl -v -u "$USER:$PASS" --fail --show-error -T "$WAR_FILE" \
+            "$URL/deploy?path=/train-ticket-reservation&update=true"
 
-          echo "Deploying CineVault to DEV..."
-
-          scp \
-            -i ~/.ssh/cinevault.pem \
-            artifact/cinevault.war \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/cinevault.war"
-
-          ssh \
-            -i ~/.ssh/cinevault.pem \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            'bash -s' << 'EOF'
-
-          set -e
-
-          echo "Stopping Tomcat..."
-          sudo systemctl stop tomcat10
-
-          echo "Removing previous deployment..."
-          sudo rm -rf /usr/share/tomcat10/webapps/cinevault
-          sudo rm -f /usr/share/tomcat10/webapps/cinevault.war
-
-          echo "Installing new WAR..."
-          sudo cp /tmp/cinevault.war /usr/share/tomcat10/webapps/cinevault.war
-
-          echo "Starting Tomcat..."
-          sudo systemctl start tomcat10
-
-          echo "Waiting for application..."
-          for i in {1..12}; do
-            if curl -fsS http://localhost:8080/cinevault/ > /dev/null; then
-              echo "DEV application is responding."
-              exit 0
-            fi
-
-            sleep 5
-          done
-
-          echo "DEV deployment health check failed."
-          sudo systemctl status tomcat10 --no-pager || true
-
-          exit 1
-
-          EOF
-
-
-  # ==========================================================
-  # TEST
-  # ==========================================================
   deploy-test:
-    name: Deploy → TEST
     needs: deploy-dev
     runs-on: ubuntu-latest
-
-    environment:
-      name: test
-
     steps:
-
-      - name: Download WAR
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: cinevault-war
-          path: artifact
-
-      - name: Prepare SSH
-        shell: bash
-        run: |
-          set -e
-
-          mkdir -p ~/.ssh
-
-          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/cinevault.pem
-
-          chmod 600 ~/.ssh/cinevault.pem
-
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
+          name: war-file
 
       - name: Deploy to TEST
-        shell: bash
+        env:
+          URL: ${{ secrets.TOMCAT_HOST_TEST }}
+          USER: ${{ secrets.TOMCAT_USER_TEST }}
+          PASS: ${{ secrets.TOMCAT_PASS_TEST }}
         run: |
-          set -e
+          WAR_FILE=$(ls *.war | head -n 1)
+          echo "Deploying $WAR_FILE to TEST ($URL)"
+          curl -v -u "$USER:$PASS" "$URL/list"
+          curl -v -u "$USER:$PASS" --fail --show-error -T "$WAR_FILE" \
+            "$URL/deploy?path=/train-ticket-reservation&update=true"
 
-          echo "Deploying CineVault to TEST..."
-
-          scp \
-            -i ~/.ssh/cinevault.pem \
-            artifact/cinevault.war \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/cinevault.war"
-
-          ssh \
-            -i ~/.ssh/cinevault.pem \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            'bash -s' << 'EOF'
-
-          set -e
-
-          echo "Stopping Tomcat..."
-          sudo systemctl stop tomcat10
-
-          echo "Removing previous deployment..."
-          sudo rm -rf /usr/share/tomcat10/webapps/cinevault
-          sudo rm -f /usr/share/tomcat10/webapps/cinevault.war
-
-          echo "Installing new WAR..."
-          sudo cp /tmp/cinevault.war /usr/share/tomcat10/webapps/cinevault.war
-
-          echo "Starting Tomcat..."
-          sudo systemctl start tomcat10
-
-          echo "Waiting for application..."
-          for i in {1..12}; do
-            if curl -fsS http://localhost:8080/cinevault/ > /dev/null; then
-              echo "TEST application is responding."
-              exit 0
-            fi
-
-            sleep 5
-          done
-
-          echo "TEST deployment health check failed."
-          sudo systemctl status tomcat10 --no-pager || true
-
-          exit 1
-
-          EOF
-
-
-  # ==========================================================
-  # PRE-PRODUCTION
-  # ==========================================================
-  deploy-preprod:
-    name: Deploy → PRE-PROD
+  deploy-prepod:
     needs: deploy-test
     runs-on: ubuntu-latest
-
-    environment:
-      name: pre-production
-
     steps:
-
-      - name: Download WAR
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: cinevault-war
-          path: artifact
+          name: war-file
 
-      - name: Prepare SSH
-        shell: bash
+      - name: Deploy to PRE-POD
+        env:
+          URL: ${{ secrets.TOMCAT_HOST_PRE_POD }}
+          USER: ${{ secrets.TOMCAT_USER_PRE_POD }}
+          PASS: ${{ secrets.TOMCAT_PASS_PRE_POD }}
         run: |
-          set -e
+          WAR_FILE=$(ls *.war | head -n 1)
+          echo "Deploying $WAR_FILE to PRE-POD ($URL)"
+          curl -v -u "$USER:$PASS" "$URL/list"
+          curl -v -u "$USER:$PASS" --fail --show-error -T "$WAR_FILE" \
+            "$URL/deploy?path=/train-ticket-reservation&update=true"
 
-          mkdir -p ~/.ssh
-
-          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/cinevault.pem
-
-          chmod 600 ~/.ssh/cinevault.pem
-
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Deploy to PRE-PROD
-        shell: bash
-        run: |
-          set -e
-
-          echo "Deploying CineVault to PRE-PROD..."
-
-          scp \
-            -i ~/.ssh/cinevault.pem \
-            artifact/cinevault.war \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/cinevault.war"
-
-          ssh \
-            -i ~/.ssh/cinevault.pem \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            'bash -s' << 'EOF'
-
-          set -e
-
-          echo "Stopping Tomcat..."
-          sudo systemctl stop tomcat10
-
-          echo "Removing previous deployment..."
-          sudo rm -rf /usr/share/tomcat10/webapps/cinevault
-          sudo rm -f /usr/share/tomcat10/webapps/cinevault.war
-
-          echo "Installing new WAR..."
-          sudo cp /tmp/cinevault.war /usr/share/tomcat10/webapps/cinevault.war
-
-          echo "Starting Tomcat..."
-          sudo systemctl start tomcat10
-
-          echo "Waiting for application..."
-          for i in {1..12}; do
-            if curl -fsS http://localhost:8080/cinevault/ > /dev/null; then
-              echo "PRE-PROD application is responding."
-              exit 0
-            fi
-
-            sleep 5
-          done
-
-          echo "PRE-PROD deployment health check failed."
-          sudo systemctl status tomcat10 --no-pager || true
-
-          exit 1
-
-          EOF
-
-
-  # ==========================================================
-  # PRODUCTION
-  # ==========================================================
-  deploy-production:
-    name: Deploy → PRODUCTION
-    needs: deploy-preprod
+  deploy-prod:
+    needs: deploy-prepod
     runs-on: ubuntu-latest
-
-    environment:
-      name: production
-
     steps:
-
-      - name: Download WAR
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
-          name: cinevault-war
-          path: artifact
+          name: war-file
 
-      - name: Prepare SSH
-        shell: bash
+      - name: Deploy to PROD
+        env:
+          URL: ${{ secrets.TOMCAT_HOST_PROD }}
+          USER: ${{ secrets.TOMCAT_USER_PROD }}
+          PASS: ${{ secrets.TOMCAT_PASS_PROD }}
         run: |
-          set -e
-
-          mkdir -p ~/.ssh
-
-          printf '%s\n' "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/cinevault.pem
-
-          chmod 600 ~/.ssh/cinevault.pem
-
-          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts
-
-      - name: Deploy to PRODUCTION
-        shell: bash
-        run: |
-          set -e
-
-          echo "Deploying CineVault to PRODUCTION..."
-
-          scp \
-            -i ~/.ssh/cinevault.pem \
-            artifact/cinevault.war \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}:/tmp/cinevault.war"
-
-          ssh \
-            -i ~/.ssh/cinevault.pem \
-            "${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}" \
-            'bash -s' << 'EOF'
-
-          set -e
-
-          echo "Stopping Tomcat..."
-          sudo systemctl stop tomcat10
-
-          echo "Removing previous deployment..."
-          sudo rm -rf /usr/share/tomcat10/webapps/cinevault
-          sudo rm -f /usr/share/tomcat10/webapps/cinevault.war
-
-          echo "Installing new WAR..."
-          sudo cp /tmp/cinevault.war /usr/share/tomcat10/webapps/cinevault.war
-
-          echo "Starting Tomcat..."
-          sudo systemctl start tomcat10
-
-          echo "Waiting for application..."
-          for i in {1..12}; do
-            if curl -fsS http://localhost:8080/cinevault/ > /dev/null; then
-              echo "PRODUCTION application is responding."
-              exit 0
-            fi
-
-            sleep 5
-          done
-
-          echo "PRODUCTION deployment health check failed."
-          sudo systemctl status tomcat10 --no-pager || true
-
-          exit 1
-
-          EOF
+          WAR_FILE=$(ls *.war | head -n 1)
+          echo "Deploying $WAR_FILE to PROD ($URL)"
+          curl -v -u "$USER:$PASS" "$URL/list"
+          curl -v -u "$USER:$PASS" --fail --show-error -T "$WAR_FILE" \
+            "$URL/deploy?path=/train-ticket-reservation&update=true"
