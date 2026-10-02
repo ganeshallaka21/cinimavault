@@ -1,4 +1,4 @@
-name: Build and Deploy train-ticket-reservation
+name: Build and Deploy cinimavault
 
 on:
   push:
@@ -48,7 +48,7 @@ jobs:
           echo "Deploying $WAR_FILE to DEV ($URL)"
           curl -v -u "$USER:$PASS" "$URL/list"
           curl -v -u "$USER:$PASS" --fail --show-error -T "$WAR_FILE" \
-            "$URL/deploy?path=/train-ticket-reservation&update=true"
+            "$URL/deploy?path=/cinimavault&update=true"
 
   deploy-test:
     needs: deploy-dev
@@ -68,7 +68,7 @@ jobs:
           echo "Deploying $WAR_FILE to TEST ($URL)"
           curl -v -u "$USER:$PASS" "$URL/list"
           curl -v -u "$USER:$PASS" --fail --show-error -T "$WAR_FILE" \
-            "$URL/deploy?path=/train-ticket-reservation&update=true"
+            "$URL/deploy?path=/cinimavault&update=true"
 
   deploy-prepod:
     needs: deploy-test
@@ -88,7 +88,7 @@ jobs:
           echo "Deploying $WAR_FILE to PRE-POD ($URL)"
           curl -v -u "$USER:$PASS" "$URL/list"
           curl -v -u "$USER:$PASS" --fail --show-error -T "$WAR_FILE" \
-            "$URL/deploy?path=/train-ticket-reservation&update=true"
+            "$URL/deploy?path=/cinimavault&update=true"
 
   deploy-prod:
     needs: deploy-prepod
@@ -108,4 +108,4 @@ jobs:
           echo "Deploying $WAR_FILE to PROD ($URL)"
           curl -v -u "$USER:$PASS" "$URL/list"
           curl -v -u "$USER:$PASS" --fail --show-error -T "$WAR_FILE" \
-            "$URL/deploy?path=/train-ticket-reservation&update=true"
+            "$URL/deploy?path=/cinimavault&update=true"
